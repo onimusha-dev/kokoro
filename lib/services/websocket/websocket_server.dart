@@ -137,12 +137,25 @@ class WebSocketServer {
       };
 
       ws.onmessage = (event) => {
-        const url = URL.createObjectURL(event.data);
+        const data = event.data;
+        const size = data.size || data.length || 0;
+        status.textContent = 'Received frame: ' + size + ' bytes';
+        status.style.color = '#4CAF50';
+
+        const blob = new Blob([data], { type: 'image/jpeg' });
+        const url = URL.createObjectURL(blob);
         const oldUrl = img.src;
         img.src = url;
-        if (oldUrl && oldUrl.startsWith('blob:')) {
-          URL.revokeObjectURL(oldUrl);
-        }
+        
+        img.onload = () => {
+          if (oldUrl && oldUrl.startsWith('blob:')) {
+            URL.revokeObjectURL(oldUrl);
+          }
+        };
+        img.onerror = () => {
+          status.textContent = 'Error loading image! Size: ' + size;
+          status.style.color = '#F44336';
+        };
       };
 
       ws.onclose = () => {
@@ -253,8 +266,9 @@ class WebSocketServer {
   }
 
   img.Image _convertYUV420(CameraImage frame) {
-    final width = frame.width;
-    final height = frame.height;
+    const step = 2; // Downsample for performance (process 1 out of every 4 pixels)
+    final width = frame.width ~/ step;
+    final height = frame.height ~/ step;
     final image = img.Image(width: width, height: height);
 
     final yPlane = frame.planes[0];
@@ -273,12 +287,19 @@ class WebSocketServer {
     final vPixelStride = vPlane.bytesPerPixel ?? 1;
 
     for (int py = 0; py < height; py++) {
+      final actualY = py * step;
       for (int px = 0; px < width; px++) {
-        final yIndex = py * yStride + px;
-        final uvX = px ~/ 2;
-        final uvY = py ~/ 2;
-        final uIndex = uvY * uStride + uvX * uPixelStride;
-        final vIndex = uvY * vStride + uvX * vPixelStride;
+        final actualX = px * step;
+        final yIndex = actualY * yStride + actualX;
+        
+        final uvX = actualX ~/ 2;
+        final uvY = actualY ~/ 2;
+        int uIndex = uvY * uStride + uvX * uPixelStride;
+        int vIndex = uvY * vStride + uvX * vPixelStride;
+
+        // CRITICAL: Prevent RangeError on some Android devices with padded U/V planes
+        if (uIndex >= u.length) uIndex = u.length - 1;
+        if (vIndex >= v.length) vIndex = v.length - 1;
 
         final yValue = y[yIndex];
         final uValue = u[uIndex];
@@ -288,11 +309,7 @@ class WebSocketServer {
         int g = (yValue - 0.344136 * (uValue - 128) - 0.714136 * (vValue - 128)).round();
         int b = (yValue + 1.772 * (uValue - 128)).round();
 
-        r = r.clamp(0, 255);
-        g = g.clamp(0, 255);
-        b = b.clamp(0, 255);
-
-        image.setPixelRgb(px, py, r, g, b);
+        image.setPixelRgb(px, py, r.clamp(0, 255), g.clamp(0, 255), b.clamp(0, 255));
       }
     }
     return image;
