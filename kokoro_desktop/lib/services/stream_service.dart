@@ -1,12 +1,11 @@
 import 'dart:async';
-import 'dart:typed_data';
 import 'package:flutter/foundation.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 
 class StreamService extends ChangeNotifier {
   WebSocketChannel? _channel;
   StreamSubscription? _subscription;
-  
+
   Uint8List? _currentFrame;
   Uint8List? get currentFrame => _currentFrame;
 
@@ -17,15 +16,15 @@ class StreamService extends ChangeNotifier {
   String get errorMessage => _errorMessage;
 
   void connect(String ipAddress) {
-    disconnect(); // ensure previous is closed
-    
+    disconnect();
+
     _errorMessage = '';
     notifyListeners();
 
     try {
       final wsUrl = Uri.parse('ws://$ipAddress:8000/ws');
       _channel = WebSocketChannel.connect(wsUrl);
-      
+
       _subscription = _channel!.stream.listen(
         (message) {
           if (!_isConnected) {
@@ -34,7 +33,7 @@ class StreamService extends ChangeNotifier {
           }
           if (message is Uint8List) {
             _currentFrame = message;
-            notifyListeners(); // Causes UI to rebuild with new frame
+            notifyListeners();
           }
         },
         onError: (error) {

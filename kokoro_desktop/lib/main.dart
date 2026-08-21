@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'services/gallery_service.dart';
 import 'services/stream_service.dart';
 import 'ui/home_page.dart';
 
@@ -7,7 +8,7 @@ void main() {
 }
 
 class KokoroDesktopApp extends StatelessWidget {
-  const KokoroDesktopApp({Key? key}) : super(key: key);
+  const KokoroDesktopApp({super.key});
 
   @override
   Widget build(BuildContext context) {
@@ -20,7 +21,10 @@ class KokoroDesktopApp extends StatelessWidget {
         scaffoldBackgroundColor: const Color(0xFF1E1E1E),
         useMaterial3: true,
       ),
-      home: HomePage(streamService: StreamService()),
+      home: HomePage(
+        galleryService: GalleryService(),
+        streamService: StreamService(),
+      ),
     );
   }
 }
