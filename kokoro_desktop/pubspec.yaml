@@ -1,4 +1,4 @@
-name: kokoro
+name: kokoro_desktop
 description: "A new Flutter project."
 # The following line prevents the package from being accidentally published to
 # pub.dev using `flutter pub publish`. This is preferred for private packages.
@@ -34,12 +34,7 @@ dependencies:
   # The following adds the Cupertino Icons font to your application.
   # Use with the CupertinoIcons class for iOS style icons.
   cupertino_icons: ^1.0.8
-  camera: ^0.12.0+2
-  shelf: ^1.4.2
-  image: ^4.9.1
-  shelf_web_socket: ^3.0.0
   web_socket_channel: ^3.0.3
-  wakelock_plus: ^1.7.0
 
 dev_dependencies:
   flutter_test:
