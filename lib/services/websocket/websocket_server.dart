@@ -1,6 +1,4 @@
-import 'dart:async';
 import 'dart:io';
-
 import 'package:camera/camera.dart';
 import 'package:flutter/foundation.dart';
 import 'package:image/image.dart' as img;
@@ -10,9 +8,12 @@ import 'package:shelf_web_socket/shelf_web_socket.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 
 import '../camera/camera_service.dart';
+import '../gallery/image_gallery_service.dart';
 
 class WebSocketServer {
   final CameraService cameraService;
+  final ImageGalleryService imageGalleryService;
+
   HttpServer? _server;
   bool _isRunning = false;
 
@@ -20,14 +21,14 @@ class WebSocketServer {
   bool _processing = false;
   bool _isStreaming = false;
 
-  WebSocketServer(this.cameraService);
+  WebSocketServer(this.cameraService, this.imageGalleryService);
 
   bool get isRunning => _isRunning;
 
   Future<void> start() async {
     if (_isRunning) {
       if (kDebugMode) {
-        print('WebSocket Server is already running');
+        print('WebSocket server is already running');
       }
       return;
     }
@@ -37,11 +38,7 @@ class WebSocketServer {
         throw Exception('Camera not initialized');
       }
 
-      if (!_isStreaming) {
-        await cameraService.startImageStream();
-        cameraService.addFrameListener(_processFrame);
-        _isStreaming = true;
-      }
+      await imageGalleryService.initialize();
 
       final wsHandler = webSocketHandler((WebSocketChannel webSocket, String? protocol) {
         _clients.add(webSocket);
@@ -49,9 +46,7 @@ class WebSocketServer {
           print('Client connected. Total clients: ${_clients.length}');
         }
 
-        webSocket.stream.listen((message) {
-          // Handle incoming messages if needed
-        }, onDone: () {
+        webSocket.stream.listen((message) {}, onDone: () {
           _clients.remove(webSocket);
           if (kDebugMode) {
             print('Client disconnected. Total clients: ${_clients.length}');
@@ -61,15 +56,26 @@ class WebSocketServer {
 
       final handler = const Pipeline()
           .addMiddleware(logRequests())
-          .addHandler((Request request) {
-        if (request.url.path == '') {
-          return Response.ok(
-            _getHtmlClient(),
-            headers: {'Content-Type': 'text/html'},
-          );
-        } else if (request.url.path == 'ws') {
+          .addHandler((Request request) async {
+        final path = request.url.path;
+
+        if (path.isEmpty || path == 'gallery' || path == 'index.html') {
+          return imageGalleryService.htmlLandingPage();
+        }
+
+        if (path == 'api/images') {
+          return imageGalleryService.apiImagesResponse(request.requestedUri);
+        }
+
+        if (path.startsWith('images/')) {
+          final name = request.url.pathSegments.length > 1 ? request.url.pathSegments[1] : '';
+          return _serveGalleryImage(name);
+        }
+
+        if (path == 'ws') {
           return wsHandler(request);
         }
+
         return Response.notFound('Not found');
       });
 
@@ -77,103 +83,65 @@ class WebSocketServer {
       _isRunning = true;
 
       if (kDebugMode) {
-        print('WebSocket server running on port ${_server!.port}');
+        print('Server running on port ${_server!.port}');
       }
     } catch (e) {
       if (kDebugMode) {
-        print('Failed to start WebSocket server: $e');
+        print('Failed to start server: $e');
       }
       rethrow;
     }
   }
 
-  String _getHtmlClient() {
-    return '''
-<!DOCTYPE html>
-<html>
-<head>
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>WebSocket Camera Feed</title>
-  <style>
-    body {
-      margin: 0;
-      background: #121212;
-      display: flex;
-      flex-direction: column;
-      justify-content: center;
-      align-items: center;
-      height: 100vh;
-      color: white;
-      font-family: sans-serif;
+  Future<void> enableWebcam() async {
+    if (!_isRunning) {
+      throw Exception('Server is not running');
     }
-    #feed {
-      max-width: 100%;
-      max-height: 90vh;
-      object-fit: contain;
-      background: #000;
+    if (_isStreaming) {
+      return;
     }
-    #status {
-      margin-top: 10px;
-      font-size: 14px;
+    await cameraService.startImageStream();
+    cameraService.addFrameListener(_processFrame);
+    _isStreaming = true;
+  }
+
+  Future<void> disableWebcam() async {
+    if (!_isStreaming) {
+      return;
     }
-  </style>
-</head>
-<body>
-  <img id="feed" alt="Waiting for feed..." />
-  <div id="status">Connecting...</div>
+    cameraService.removeFrameListener(_processFrame);
+    await cameraService.stopImageStream();
+    _isStreaming = false;
+  }
 
-  <script>
-    const img = document.getElementById('feed');
-    const status = document.getElementById('status');
-    const wsUrl = `ws://\${window.location.host}/ws`;
-    
-    function connect() {
-      const ws = new WebSocket(wsUrl);
-      ws.binaryType = 'blob';
-
-      ws.onopen = () => {
-        status.textContent = 'Connected';
-        status.style.color = '#4CAF50';
-      };
-
-      ws.onmessage = (event) => {
-        const data = event.data;
-        const size = data.size || data.length || 0;
-        status.textContent = 'Received frame: ' + size + ' bytes';
-        status.style.color = '#4CAF50';
-
-        const blob = new Blob([data], { type: 'image/jpeg' });
-        const url = URL.createObjectURL(blob);
-        const oldUrl = img.src;
-        img.src = url;
-        
-        img.onload = () => {
-          if (oldUrl && oldUrl.startsWith('blob:')) {
-            URL.revokeObjectURL(oldUrl);
-          }
-        };
-        img.onerror = () => {
-          status.textContent = 'Error loading image! Size: ' + size;
-          status.style.color = '#F44336';
-        };
-      };
-
-      ws.onclose = () => {
-        status.textContent = 'Disconnected, retrying...';
-        status.style.color = '#F44336';
-        setTimeout(connect, 2000);
-      };
-
-      ws.onerror = (error) => {
-        console.error('WebSocket Error:', error);
-      };
+  Future<Response> _serveGalleryImage(String name) async {
+    if (name.isEmpty) {
+      return Response.notFound('Image not found');
     }
 
-    connect();
-  </script>
-</body>
-</html>
-''';
+    final file = await imageGalleryService.fileForName(Uri.decodeComponent(name));
+    if (file == null) {
+      return Response.notFound('Image not found');
+    }
+
+    final bytes = await file.readAsBytes();
+    return Response.ok(
+      bytes,
+      headers: {
+        'Content-Type': _contentTypeForPath(file.path),
+        'Cache-Control': 'no-store',
+      },
+    );
+  }
+
+  String _contentTypeForPath(String path) {
+    final lower = path.toLowerCase();
+    if (lower.endsWith('.png')) return 'image/png';
+    if (lower.endsWith('.webp')) return 'image/webp';
+    if (lower.endsWith('.gif')) return 'image/gif';
+    if (lower.endsWith('.heic')) return 'image/heic';
+    if (lower.endsWith('.heif')) return 'image/heif';
+    return 'image/jpeg';
   }
 
   Future<bool> switchCamera(CameraDescription newCamera) async {
@@ -185,8 +153,7 @@ class WebSocketServer {
       cameraService.removeFrameListener(_processFrame);
 
       if (_isStreaming) {
-        await cameraService.stopImageStream();
-        _isStreaming = false;
+        await disableWebcam();
       }
 
       final success = await cameraService.switchCamera(newCamera);
@@ -195,9 +162,7 @@ class WebSocketServer {
         throw Exception('Failed to switch camera');
       }
 
-      await cameraService.startImageStream();
-      cameraService.addFrameListener(_processFrame);
-      _isStreaming = true;
+      await enableWebcam();
 
       if (kDebugMode) {
         print('Camera switched successfully');
@@ -213,19 +178,42 @@ class WebSocketServer {
     }
   }
 
+  Future<File?> captureAndSavePhoto() async {
+    if (!_isRunning) {
+      throw Exception('Server is not running');
+    }
+
+    final wasStreaming = _isStreaming;
+    try {
+      if (_isStreaming) {
+        cameraService.removeFrameListener(_processFrame);
+        await cameraService.stopImageStream();
+        _isStreaming = false;
+      }
+
+      final photo = await cameraService.takePhoto();
+      if (photo == null) {
+        return null;
+      }
+
+      return await imageGalleryService.saveCapturedPhoto(photo);
+    } finally {
+      if (wasStreaming && cameraService.isInitialized) {
+        await enableWebcam();
+      }
+    }
+  }
+
   Future<void> _recoverStream() async {
     try {
       if (_isStreaming) {
-        await cameraService.stopImageStream();
-        _isStreaming = false;
+        await disableWebcam();
       }
 
       cameraService.removeFrameListener(_processFrame);
 
       if (cameraService.isInitialized) {
-        await cameraService.startImageStream();
-        cameraService.addFrameListener(_processFrame);
-        _isStreaming = true;
+        await enableWebcam();
       }
     } catch (e) {
       if (kDebugMode) {
@@ -248,7 +236,7 @@ class WebSocketServer {
     try {
       final image = _convertYUV420(frame);
       final jpeg = img.encodeJpg(image, quality: 60);
-      
+
       final bytes = Uint8List.fromList(jpeg);
 
       for (final client in List.of(_clients)) {
@@ -266,7 +254,7 @@ class WebSocketServer {
   }
 
   img.Image _convertYUV420(CameraImage frame) {
-    const step = 2; // Downsample for performance (process 1 out of every 4 pixels)
+    const step = 2;
     final width = frame.width ~/ step;
     final height = frame.height ~/ step;
     final image = img.Image(width: width, height: height);
@@ -291,13 +279,12 @@ class WebSocketServer {
       for (int px = 0; px < width; px++) {
         final actualX = px * step;
         final yIndex = actualY * yStride + actualX;
-        
+
         final uvX = actualX ~/ 2;
         final uvY = actualY ~/ 2;
         int uIndex = uvY * uStride + uvX * uPixelStride;
         int vIndex = uvY * vStride + uvX * vPixelStride;
 
-        // CRITICAL: Prevent RangeError on some Android devices with padded U/V planes
         if (uIndex >= u.length) uIndex = u.length - 1;
         if (vIndex >= v.length) vIndex = v.length - 1;
 
@@ -305,9 +292,9 @@ class WebSocketServer {
         final uValue = u[uIndex];
         final vValue = v[vIndex];
 
-        int r = (yValue + 1.402 * (vValue - 128)).round();
-        int g = (yValue - 0.344136 * (uValue - 128) - 0.714136 * (vValue - 128)).round();
-        int b = (yValue + 1.772 * (uValue - 128)).round();
+        final r = (yValue + 1.402 * (vValue - 128)).round();
+        final g = (yValue - 0.344136 * (uValue - 128) - 0.714136 * (vValue - 128)).round();
+        final b = (yValue + 1.772 * (uValue - 128)).round();
 
         image.setPixelRgb(px, py, r.clamp(0, 255), g.clamp(0, 255), b.clamp(0, 255));
       }
@@ -337,7 +324,7 @@ class WebSocketServer {
       _isRunning = false;
 
       if (kDebugMode) {
-        print('WebSocket server stopped');
+        print('Server stopped');
       }
     } catch (e) {
       if (kDebugMode) {

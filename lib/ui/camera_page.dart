@@ -3,6 +3,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import '../services/camera/camera_service.dart';
+import '../services/gallery/image_gallery_service.dart';
 import '../services/websocket/websocket_server.dart';
 import '../utils/get_local_ip.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
@@ -10,12 +11,14 @@ import 'package:wakelock_plus/wakelock_plus.dart';
 class CameraPage extends StatefulWidget {
   final CameraService cameraService;
   final WebSocketServer server;
+  final ImageGalleryService galleryService;
   final List<CameraDescription> cameras;
 
   const CameraPage({
     super.key,
     required this.cameraService,
     required this.server,
+    required this.galleryService,
     required this.cameras,
   });
 
@@ -26,16 +29,13 @@ class CameraPage extends StatefulWidget {
 class _CameraPageState extends State<CameraPage> {
   String _ipAddress = 'Loading...';
   bool _isFrontCamera = true;
-  bool _isServerRunning = true;
+  bool _isServerRunning = false;
   bool _isSwitchingCamera = false;
 
   @override
   void initState() {
     super.initState();
     _loadIpAddress();
-    if (_isServerRunning) {
-      WakelockPlus.enable();
-    }
   }
 
   Future<void> _loadIpAddress() async {
@@ -112,25 +112,47 @@ class _CameraPageState extends State<CameraPage> {
   Future<void> _toggleServer() async {
     try {
       if (_isServerRunning) {
-        await widget.server.stop();
+        await widget.server.disableWebcam();
         WakelockPlus.disable();
         if (mounted) {
           setState(() => _isServerRunning = false);
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
-              content: Text('Server stopped'),
+              content: Text('Webcam turned off'),
               backgroundColor: Colors.orange,
             ),
           );
         }
       } else {
-        await widget.server.start();
+        final confirm = await showDialog<bool>(
+          context: context,
+          builder: (context) => AlertDialog(
+            title: const Text('Turn on webcam?'),
+            content: const Text('This will start the live camera stream for desktop access.'),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context, false),
+                child: const Text('Cancel'),
+              ),
+              ElevatedButton(
+                onPressed: () => Navigator.pop(context, true),
+                child: const Text('Turn on'),
+              ),
+            ],
+          ),
+        );
+
+        if (confirm != true) {
+          return;
+        }
+
+        await widget.server.enableWebcam();
         WakelockPlus.enable();
         if (mounted) {
           setState(() => _isServerRunning = true);
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
-              content: Text('Server started'),
+              content: Text('Webcam turned on'),
               backgroundColor: Colors.green,
             ),
           );
@@ -148,6 +170,12 @@ class _CameraPageState extends State<CameraPage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      appBar: AppBar(
+        title: const Text('Webcam'),
+        backgroundColor: const Color(0xFFF8F9FA),
+        foregroundColor: Colors.black,
+        elevation: 0,
+      ),
       backgroundColor: const Color(0xFFF8F9FA), // Clean off-white background
       body: SafeArea(
         child: Padding(
@@ -237,7 +265,7 @@ class _CameraPageState extends State<CameraPage> {
                     ),
                     const SizedBox(height: 6),
                     Text(
-                      _isServerRunning ? '🟢 Server is broadcasting live' : '🔴 Server is currently offline',
+                      _isServerRunning ? '🟢 Webcam is live' : '🔴 Webcam is off',
                       style: TextStyle(
                         fontSize: 15,
                         color: _isServerRunning ? Colors.green.shade600 : Colors.red.shade400,
@@ -272,12 +300,12 @@ class _CameraPageState extends State<CameraPage> {
                           mainAxisAlignment: MainAxisAlignment.center,
                           children: [
                             Icon(
-                              _isServerRunning ? Icons.power_settings_new_rounded : Icons.play_arrow_rounded,
+                              _isServerRunning ? Icons.videocam_off_rounded : Icons.videocam_rounded,
                               size: 40,
                             ),
                             const SizedBox(height: 12),
                             Text(
-                              _isServerRunning ? 'Server Off' : 'Server On',
+                              _isServerRunning ? 'Webcam Off' : 'Webcam On',
                               style: const TextStyle(
                                 fontSize: 17,
                                 fontWeight: FontWeight.bold,
