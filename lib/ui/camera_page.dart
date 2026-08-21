@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import '../services/camera/camera_service.dart';
 import '../services/websocket/websocket_server.dart';
 import '../utils/get_local_ip.dart';
+import 'package:wakelock_plus/wakelock_plus.dart';
 
 class CameraPage extends StatefulWidget {
   final CameraService cameraService;
@@ -32,6 +33,9 @@ class _CameraPageState extends State<CameraPage> {
   void initState() {
     super.initState();
     _loadIpAddress();
+    if (_isServerRunning) {
+      WakelockPlus.enable();
+    }
   }
 
   Future<void> _loadIpAddress() async {
@@ -109,6 +113,7 @@ class _CameraPageState extends State<CameraPage> {
     try {
       if (_isServerRunning) {
         await widget.server.stop();
+        WakelockPlus.disable();
         if (mounted) {
           setState(() => _isServerRunning = false);
           ScaffoldMessenger.of(context).showSnackBar(
@@ -120,6 +125,7 @@ class _CameraPageState extends State<CameraPage> {
         }
       } else {
         await widget.server.start();
+        WakelockPlus.enable();
         if (mounted) {
           setState(() => _isServerRunning = true);
           ScaffoldMessenger.of(context).showSnackBar(
@@ -341,6 +347,7 @@ class _CameraPageState extends State<CameraPage> {
 
   @override
   void dispose() {
+    WakelockPlus.disable();
     widget.server.dispose();
     widget.cameraService.dispose();
     super.dispose();
