@@ -2,18 +2,21 @@ import 'dart:io';
 
 import 'package:camera/camera.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:photo_manager/photo_manager.dart';
 import 'package:shelf/shelf.dart';
 import 'dart:convert';
 
 class GalleryImage {
   final String name;
   final String url;
+  final String filePath;
   final DateTime modifiedAt;
   final int sizeBytes;
 
   const GalleryImage({
     required this.name,
     required this.url,
+    required this.filePath,
     required this.modifiedAt,
     required this.sizeBytes,
   });
@@ -21,6 +24,7 @@ class GalleryImage {
   Map<String, dynamic> toJson() => {
         'name': name,
         'url': url,
+        'filePath': filePath,
         'modifiedAt': modifiedAt.toIso8601String(),
         'sizeBytes': sizeBytes,
       };
@@ -63,43 +67,38 @@ class ImageGalleryService {
   }
 
   Future<List<GalleryImage>> listImages(Uri baseUri) async {
-    await initialize();
-
-    final directory = _galleryDir!;
-    final entries = <GalleryImage>[];
-
-    await for (final entity in directory.list(followLinks: false)) {
-      if (entity is! File) {
-        continue;
+    try {
+      final List<AssetPathEntity> paths = await PhotoManager.getAssetPathList(type: RequestType.image);
+      if (paths.isEmpty) {
+        return [];
       }
 
-      final path = entity.path;
-      if (!_isImageFile(path)) {
-        continue;
+      final AssetPathEntity recentPath = paths.first;
+      final List<AssetEntity> entities = await recentPath.getAssetListPaged(page: 0, size: 100);
+
+      final entries = <GalleryImage>[];
+      for (final entity in entities) {
+        entries.add(
+          GalleryImage(
+            name: entity.id,
+            url: '${baseUri.origin}/images/${Uri.encodeComponent(entity.id)}',
+            filePath: '', // not required for the remote API payload
+            modifiedAt: entity.createDateTime,
+            sizeBytes: 0,
+          ),
+        );
       }
 
-      final stat = await entity.stat();
-      final name = path.split(Platform.pathSeparator).last;
-      entries.add(
-        GalleryImage(
-          name: name,
-          url: '${baseUri.origin}/images/${Uri.encodeComponent(name)}',
-          modifiedAt: stat.modified,
-          sizeBytes: stat.size,
-        ),
-      );
+      return entries;
+    } catch (e) {
+      return [];
     }
-
-    entries.sort((a, b) => b.modifiedAt.compareTo(a.modifiedAt));
-    return entries;
   }
 
   Future<File?> fileForName(String name) async {
-    await initialize();
-    final safeName = name.split('/').last.split('\\').last;
-    final file = File('${_galleryDir!.path}/$safeName');
-    if (await file.exists()) {
-      return file;
+    final AssetEntity? entity = await AssetEntity.fromId(name);
+    if (entity != null) {
+      return await entity.file;
     }
     return null;
   }
