@@ -41,6 +41,7 @@ dependencies:
   web_socket_channel: ^3.0.3
   wakelock_plus: ^1.7.0
   path_provider: ^2.1.5
+  photo_manager: ^3.12.0
 
 dev_dependencies:
   flutter_test:
